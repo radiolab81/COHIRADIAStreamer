@@ -11,7 +11,7 @@ Following the basic principles of cohiplayer_smi (https://github.com/radiolab81/
 
 ![mainsw](https://github.com/radiolab81/COHIRADIAStreamer/blob/main/www/mainui_sw.jpg)
 
-Due to the high sample rates enabled by SMI on the Raspberry Pi, playback of shortwave recordings in the 49m band is also possible, if the streaming PC has sufficient processing power and bandwidth. Sample rates of 25 MSPS are achievable on modern PCs with a direct Gigabit connection to the DAC, without any dropped samples occurring in the SMISDR, according to our tests. (god bless DMA and SMI)
+Due to the high sample rates enabled by SMI on the Raspberry Pi, playback of shortwave recordings in the 49m band is also possible, if the streaming PC has sufficient processing power and bandwidth. According to our tests, sample rates of 25 MSPS are achievable on modern PCs with a direct Gigabit connection to the DAC, without any dropped samples occurring in the SMISDR. (god bless DMA and SMI)
 
 If you are using the client in conjunction with the budget solution osmo-fl2k, please use `sudo fl2k_tcp -p 1235 -s 10000000` and `socat` as a TCP/IP bridge: `socat -u TCP4-LISTEN:1234,reuseaddr TCP4-LISTEN:1235,reuseaddr`  Set the IP address to 127.0.0.1 (localhost) and use a sample rate of 10 MSPS, which the FL2K handles very well.
 
