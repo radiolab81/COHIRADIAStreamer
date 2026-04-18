@@ -1,4 +1,4 @@
-# COHIRADIA Streaming Client based on liquiddsp and QT
+# COHIRADIA Streaming Client based on liquiddsp / QT
 This is a streaming client/player software for the COHIRADIA project by Hermann Scharfetter.
 
 https://www.cohiradia.org/de/
@@ -16,3 +16,25 @@ Due to the high sample rates enabled by SMI on the Raspberry Pi, playback of sho
 If you are using the client in conjunction with the budget solution osmo-fl2k, please use `sudo fl2k_tcp -p 1235 -s 10000000` and `socat` as a TCP/IP bridge: `socat -u TCP4-LISTEN:1234,reuseaddr TCP4-LISTEN:1235,reuseaddr`  Set the IP address to 127.0.0.1 (localhost) and use a sample rate of 10 MSPS, which the FL2K handles very well.
 
 ![mainfl2k](https://github.com/radiolab81/COHIRADIAStreamer/blob/main/www/mainui_fl2k.jpg)
+
+To build the COHIRADIAStreamer, please install the following dependencies and prerequisites.
+
+```console
+sudo apt update
+sudo apt install build-essential cmake qtbase5-dev qt5-qmake libliquid-dev qt6-base-dev libqt6widgets6 libxkbcommon-dev
+```
+build the app:
+
+```console
+git clone https://github.com/radiolab81/COHIRADIAStreamer
+cd COHIRADIAStreamer
+mkdir build
+cd build
+cmake ..
+make
+```
+
+running the app:
+```console
+./COHIRADIAStreamer
+```
