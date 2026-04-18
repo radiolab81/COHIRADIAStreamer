@@ -201,8 +201,8 @@ QString DspWorker::run_dsp_engine(QString fullPath, int sock) {
                 if (targetBits == 8) {
                     for(unsigned int k=0; k<nw; k++) 
                         if (useOffset) {
-                            //nb8[k] = (uint8_t)(netBuf[k] + 127);
-                            nb8[k] = static_cast<uint8_t>(static_cast<int8_t>(netBuf[k]) + 127);
+                            //nb8[k] = (uint8_t)(netBuf[k] + 128);
+                            nb8[k] = static_cast<uint8_t>(static_cast<int8_t>(netBuf[k]) + 128);
                         } else {
                             //nb8[k] = (int8_t)netBuf[k];
                             nb8[k] = static_cast<int8_t>(netBuf[k]);
