@@ -9,9 +9,11 @@ https://www.radiomuseum.org/dsp_cohiradia.cfm
 
 Following the basic principles of cohiplayer_smi (https://github.com/radiolab81/cohiplayer_smi) , the streaming client is more of a real desktop app. Based on liquid-dsp (https://liquidsdr.org/) and QT, it can stream IQ-WAV Cohiradia recordings or the COHILiveNetwork to the smisdr (https://github.com/radiolab81/smisdr) via highspeed ethernet connection. It supports the entire range of DACs provided by smisdr (from 8- to 16-bit RF DACs) as well as the ultra-low-cost osmo-fl2k sdr transmitter and other  TCP/IP based SDRs from the radiolab81 group.
 
+![mainmw](https://github.com/radiolab81/COHIRADIAStreamer/blob/main/www/mw.jpg)
+
 ![mainsw](https://github.com/radiolab81/COHIRADIAStreamer/blob/main/www/mainui_sw.jpg)
 
-![mainsw](https://github.com/radiolab81/COHIRADIAStreamer/blob/main/www/49m.jpg)
+![mainsw2](https://github.com/radiolab81/COHIRADIAStreamer/blob/main/www/49m.jpg)
 
 Due to the high sample rates enabled by SMI on the Raspberry Pi, playback of shortwave recordings in the 49m band is also possible, if the streaming PC has sufficient processing power and bandwidth. According to our tests, sample rates of 25 MSPS are achievable on modern PCs with a direct Gigabit connection to the DAC, without any dropped samples occurring in the SMISDR. (god bless DMA and SMI)
 
