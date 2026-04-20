@@ -41,7 +41,7 @@ private:
     QProgressBar *progress, *levelBar; QPushButton *btnPlay, *btnStop;
     QString selectedFile; DspWorker *currentWorker = nullptr;
     QLabel *statusLabel;
-    QCheckBox *checkOffset;
+    QCheckBox *checkOffset, *checkDSP32;
 };
 
 #endif // MAINWINDOW_H

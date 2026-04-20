@@ -20,6 +20,7 @@ public:
     std::atomic<bool> useAGC{true};
     std::atomic<float> manualGainValue{0.65f};
     std::atomic<bool> useOffset{false};
+    std::atomic<bool> checkDSP32{false};
 
 signals:
     void progressUpdated(float percent);
@@ -33,6 +34,7 @@ private:
     bool set_dac_width(const std::string& ip, int bits);
     bool set_dac_rate(const std::string& ip, float rate);
     QString run_dsp_engine(QString fullPath, int sock);
+    QString run_dsp_engine_32INT(QString fullPath, int sock);
 };
 
 #endif // DSPWORKER_H

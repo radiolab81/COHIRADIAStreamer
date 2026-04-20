@@ -81,6 +81,10 @@ MainWindow::MainWindow() {
     checkOffset = new QCheckBox("DC Offset");
     checkOffset->setChecked(false); //  default on SMI: off
     settingsForm->addRow("Options:", checkOffset);
+
+    checkDSP32 = new QCheckBox("use INT32-DSP instead liquiddsp [for slower CPUs]");
+    checkDSP32->setChecked(false); //  default off
+    settingsForm->addRow("DSP-Machine:",checkDSP32);
     
     rightLayout->addWidget(settingsContainer);
 
@@ -121,6 +125,7 @@ MainWindow::MainWindow() {
     connect(editManualGain, &QLineEdit::textChanged, this, &MainWindow::onGainChanged);
 
     connect(checkOffset, &QCheckBox::toggled, this, &MainWindow::onOffsetToggled);
+    connect(checkDSP32, &QCheckBox::toggled, this, &MainWindow::onOffsetToggled);
 
     connect(comboRate, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::updateInfrastrukturCheck);
     connect(comboBits, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::updateInfrastrukturCheck);
@@ -171,8 +176,10 @@ void MainWindow::updateInfrastrukturCheck() {
 void MainWindow::onOffsetToggled(bool checked) {
     if (currentWorker) {
         currentWorker->useOffset = checked;
+        currentWorker->checkDSP32 = checked;
     }
 }
+
 
 void MainWindow::onFileSelected(const QModelIndex &index) {
     if (btnStop->isEnabled()) return; // Während Play keine neue Datei wählen
@@ -216,6 +223,7 @@ void MainWindow::startStreaming() {
     comboRate->setEnabled(false);
     comboBits->setEnabled(false);
     editShift->setEnabled(false);
+    checkDSP32->setEnabled(false);
 
     // AGC und Gain bleiben ENABLED!
     checkAGC->setEnabled(true); 
@@ -230,6 +238,7 @@ void MainWindow::startStreaming() {
     worker->manualShiftFreq = editShift->text().toFloat();
     worker->useAGC = checkAGC->isChecked();
     worker->useOffset = checkOffset->isChecked();
+    worker->checkDSP32 = checkDSP32->isChecked();
     worker->manualGainValue = editManualGain->text().toFloat() / 100.0f;
     
 
@@ -251,6 +260,7 @@ void MainWindow::startStreaming() {
     comboRate->setEnabled(true);
     comboBits->setEnabled(true);
     editShift->setEnabled(true);
+    checkDSP32->setEnabled(true);
 
     // UI-Elemente
     treeView->setEnabled(true);
