@@ -43,8 +43,8 @@ MainWindow::MainWindow() {
     editIP = new QLineEdit("127.0.0.1");
     editPort = new QLineEdit("1234");
     comboRate = new QComboBox();
-    comboRate->addItem("5 MSPS (SMISDR)", 5000000.0f);
-    comboRate->addItem("10.0 MSPS (fl2k)", 10000000.0f);
+    comboRate->addItem("5 MSPS (SMISDR, parlioSDR)", 5000000.0f);
+    comboRate->addItem("10.0 MSPS (fl2k, parlioSDR)", 10000000.0f);
     comboRate->addItem("12.5 MSPS (SMISDR)", 12500000.0f);
     comboRate->addItem("15.625 MSPS (SMISDR)", 15625000.0f);
     comboRate->addItem("25 MSPS (SMISDR)", 25000000.0f);
