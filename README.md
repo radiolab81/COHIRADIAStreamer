@@ -25,7 +25,7 @@ To build the COHIRADIAStreamer, please install the following dependencies and pr
 
 ```console
 sudo apt update
-sudo apt install build-essential cmake qtbase5-dev qt5-qmake libliquid-dev qt6-base-dev libqt6widgets6 libxkbcommon-dev
+sudo apt install build-essential cmake git qtbase5-dev qt5-qmake libliquid-dev qt6-base-dev libqt6widgets6 libxkbcommon-dev
 ```
 build the app:
 
