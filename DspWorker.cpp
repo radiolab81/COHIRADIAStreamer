@@ -293,7 +293,8 @@ QString DspWorker::run_dsp_engine_32INT(QString fullPath, int sock) {
             int32_t lastI = 0, lastQ = 0;
             // Koeffizienten für einen LP (Summe = 128)
             const int32_t coeffs[7] = { 4, 16, 26, 36, 26, 16, 4 }; 
-            int32_t hf_history[7] = {0, 0, 0, 0, 0, 0, 0};
+            int32_t i_history[7] = {0, 0, 0, 0, 0, 0, 0};
+            int32_t q_history[7] = {0, 0, 0, 0, 0, 0, 0};
 
             int effectiveBits = (targetBits == 816) ? 8 : targetBits;
             float bitScale = powf(2.0f, effectiveBits - 1) - 1.0f;
@@ -356,31 +357,34 @@ QString DspWorker::run_dsp_engine_32INT(QString fullPath, int sock) {
                         int32_t currI = (int32_t)(lastI * (1.0f - mu2) + nextI * mu2);
                         int32_t currQ = (int32_t)(lastQ * (1.0f - mu2) + nextQ * mu2);
 
+
+                        // FIR Glättungs-Filter auf das BASISBAND (I und Q separat)/
+                        for (int k=0; k<6; k++) {
+                            i_history[k] = i_history[k+1];
+                            q_history[k] = q_history[k+1];
+                        }
+                        i_history[6] = currI;
+                        q_history[6] = currQ;
+
+                        int32_t filt_I = (i_history[0]*coeffs[0] + i_history[1]*coeffs[1] + 
+                                          i_history[2]*coeffs[2] + i_history[3]*coeffs[3] + 
+                                          i_history[4]*coeffs[4] + i_history[5]*coeffs[5] + 
+                                          i_history[6]*coeffs[6]) >> 7;
+
+                        int32_t filt_Q = (q_history[0]*coeffs[0] + q_history[1]*coeffs[1] + 
+                                          q_history[2]*coeffs[2] + q_history[3]*coeffs[3] + 
+                                          q_history[4]*coeffs[4] + q_history[5]*coeffs[5] + 
+                                          q_history[6]*coeffs[6]) >> 7;
+
                         // NCO Mischer (Phase rückt pro Ausgangs-Sample vor)
                         phase_nco += phase_inc_nco;
                         uint32_t lut_idx = phase_nco >> (32 - LUT_BITS);
                         int32_t c = cos_lut[lut_idx];
                         int32_t s = sine_lut[lut_idx];
 
-                        // Komplexer Frequenz-Shift: I*cos - Q*sin
-                        int32_t mixed = ((currI * c) - (currQ * s)) >> 15;
-                        int32_t hf = (mixed * g_int) >> 15;
-
-                        // FIR Glättungs-Filter zur Aliasing-Unterdrückung
-		        // History Shift
-                        for (int k=0; k<6; k++) hf_history[k] = hf_history[k+1];
-                             hf_history[6] = hf;
-
-                        // Faltung (FIR Convolution)
-                        int32_t acc = hf_history[0] * coeffs[0] +
-                                      hf_history[1] * coeffs[1] +
-                                      hf_history[2] * coeffs[2] +
-                                      hf_history[3] * coeffs[3] +
-                                      hf_history[4] * coeffs[4] +
-                                      hf_history[5] * coeffs[5] +
-                                      hf_history[6] * coeffs[6];
-
-                        int32_t smoothed = acc >> 7; // Division durch Summe der Coeffs
+                        // Komplexer Frequenz-Shift: I*cos - Q*sin mit gefiltertem I und Q
+                        int32_t mixed = ((filt_I * c) - (filt_Q * s)) >> 15;
+                        int32_t smoothed = (mixed * g_int) >> 15;
 
                         // Clipping & Format-Wandlung
                         if (smoothed > bitScale) smoothed = bitScale;
