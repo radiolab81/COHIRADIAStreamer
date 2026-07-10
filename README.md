@@ -21,7 +21,37 @@ If you are using the client in conjunction with the budget solution osmo-fl2k, p
 
 ![mainfl2k](https://github.com/radiolab81/COHIRADIAStreamer/blob/main/www/mainui_fl2k.jpg)
 
-To build the COHIRADIAStreamer, please install the following dependencies and prerequisites.
+## 🚀 NEW: Direct I/Q Streaming & FPGA DUC (In-Band Signaling)
+
+We now support direct I/Q streaming for the FPGA gateware of [smiSDR](https://github.com/radiolab81/smisdr/blob/main/gateware/README.md) and **parlioSDR**!
+
+
+![mainsw3](https://github.com/radiolab81/COHIRADIAStreamer/blob/main/www/COHIRADIAStreamer_IQ_20M.jpg)
+
+Previously, the *COHIRADIAStreamer* had to perform the resource-intensive Digital Up-Conversion (DUC) in software and transmit the ready-to-use RF samples over the network. Reaching higher target frequencies, such as the shortwave (HF) bands, inevitably led to extreme network bandwidth requirements. Because of this, reaching the HF bands was mostly limited to setups like the Raspberry Pi 4 equipped with a true Gigabit Ethernet connection. The Raspberry Pi 4 was the only machine, providing I/Q software DUC too.
+
+With the newly introduced **I/Q Mode (16 Bit with In-Band Signaling)**, the Digital Up-Converter is shifted directly into the gateware. 
+
+### ✨ Key Advantages:
+* **Drastically Reduced Network Bandwidth:** Since only the I/Q baseband needs to be transmitted at the native file sample rate (e.g., 250 kHz), the required data rate drops significantly. Up-converting into the 15m band (e.g., at 18.96 MHz) now requires merely **~4.0 MBit/s** of network bandwidth!
+
+  ![mainsw4](https://github.com/radiolab81/COHIRADIAStreamer/blob/main/www/netw_bw_15m.jpg)
+
+  ![mainsw5](https://github.com/radiolab81/COHIRADIAStreamer/blob/main/www/15m.jpg)
+  
+* **Shortwave over 100 MBit/s and ESP32:** Thanks to this massive reduction in bandwidth, you no longer need a Gigabit connection. Shortwave transmission is now perfectly feasible on older Raspberry Pi models limited to 100 MBit/s Ethernet, or even on the ESP32P4 (**parlioSDR**)! 
+* **Reduced Host CPU Load:** The highly demanding software up-sampling processes, like the resampler and NCO mixer, are entirely bypassed on the COHIRADIAStreamer host PC, smisdr or parlioSDR-Device.
+
+### 🛠 Technical Implementation & GUI Usage:
+Using this mode is straightforward:
+1. Select a file in the GUI and check the box **"I/Q Mode: SW or FPGA DUC (16 Bit with In-Band Signaling)"**.
+2. Options like *Samplerate* and *DAC Bits* are automatically disabled since the streamer natively extracts these parameters directly from the WAV file metadata.
+3. Upon starting the stream, the application calculates the Phase Tuning Word (FTW) for the NCO frequency shift and sends initialization commands directly within the data stream to the FPGA.
+4. The I/Q data is transmitted as a 14-bit payload with a 2-bit tag in the MSB (Bit 15:14: `00` for I, `01` for Q), allowing the FPGA to easily separate and process the streams. See https://github.com/radiolab81/smisdr/blob/main/gateware/README.md#-protocol-review-in-band-signaling-over-smibus--parlio for more details.
+
+
+
+## To build the COHIRADIAStreamer, please install the following dependencies and prerequisites.
 
 ```console
 sudo apt update
