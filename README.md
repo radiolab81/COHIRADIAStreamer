@@ -41,6 +41,7 @@ With the newly introduced **I/Q Mode (16 Bit with In-Band Signaling)**, the Digi
   
 * **Shortwave over 100 MBit/s and ESP32:** Thanks to this massive reduction in bandwidth, you no longer need a Gigabit connection. Shortwave transmission is now perfectly feasible on older Raspberry Pi models limited to 100 MBit/s Ethernet, or even on the ESP32P4 (**parlioSDR**)! 
 * **Reduced Host CPU Load:** The highly demanding software up-sampling processes, like the resampler and NCO mixer, are entirely bypassed on the COHIRADIAStreamer host PC, smisdr or parlioSDR-Device.
+* **Future-Proof Gateware Scalability:** While the COHIRADIA ecosystem naturally focuses on AM and DRM transmission across Longwave, Mediumwave, and Shortwave (HF), the underlying gateware is highly versatile. By default, it runs on a 50 MHz clock (allowing direct mixing up to 25 MHz). However, depending on the FPGA board, it can easily be clocked up to 250 MHz or 400 MHz or higher via PLL, seamlessly opening the door for VHF (FM) or DAB applications in independent setups.
 
 ### 🛠 Technical Implementation & GUI Usage:
 Using this mode is straightforward:
