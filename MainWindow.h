@@ -5,7 +5,7 @@
 #include <QModelIndex>
 #include <QString>
 
-// Vorwärtsdeklarationen
+// Vorwärtsdeklarationen für Qt-Klassen
 class QFileSystemModel;
 class QTreeView;
 class QLabel;
@@ -34,14 +34,27 @@ private slots:
     void onGainChanged(const QString &text);
 
 private:
-    QFileSystemModel *fileModel; QTreeView *treeView; QLabel *infoBox;
+    QFileSystemModel *fileModel; 
+    QTreeView *treeView; 
+    QLabel *infoBox;
     QWidget *settingsContainer;
     QLineEdit *editIP, *editPort, *editShift, *editManualGain; 
-    QComboBox *comboRate, *comboBits; QCheckBox *checkAGC;
-    QProgressBar *progress, *levelBar; QPushButton *btnPlay, *btnStop;
-    QString selectedFile; DspWorker *currentWorker = nullptr;
+    QComboBox *comboRate, *comboBits; 
+    QCheckBox *checkAGC;
+    QProgressBar *progress, *levelBar; 
+    QPushButton *btnPlay, *btnStop;
+    QString selectedFile; 
+    DspWorker *currentWorker = nullptr;
     QLabel *statusLabel;
-    QCheckBox *checkOffset, *checkDSP32;
+    
+    // Bestehende Checkboxen
+    QCheckBox *checkOffset;
+    QCheckBox *checkDSP32;
+    
+    // Checkbox für die direkte FPGA In-Band Signaling Engine
+    QCheckBox *checkIQEngine; 
+
+    uint32_t currentFileSampleRate = 0;
 };
 
 #endif // MAINWINDOW_H

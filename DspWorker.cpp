@@ -27,12 +27,16 @@ void DspWorker::process() {
     running = true;
     QString currentFile = filePath;
     
-    // 1. HARDWARE-KONFIGURATION (Port 5000)
-    set_dac_width(targetIP.toStdString(), targetBits);
-    set_dac_rate(targetIP.toStdString(), targetRate);
-    QThread::msleep(50);
+    // HARDWARE-KONFIGURATION (Port 5000)
+    // Wenn NICHT die IQ-Engine genutzt wird, setzen wir die Hardware vorab
+    // Die IQ-Engine steuert die Hardware dynamisch anhand der Metadaten aus der WAV-Datei!
+    if (!checkIQEngine) {
+        set_dac_width(targetIP.toStdString(), targetBits);
+        set_dac_rate(targetIP.toStdString(), targetRate);
+        QThread::msleep(50);
+    }
 
-    // 2. DATEN-VERBINDUNG (z.B. Port 1234)
+    // DATEN-VERBINDUNG (z.B. Port 1234)
     int sock = ::socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in srv = { .sin_family = AF_INET, .sin_port = htons(targetPort) };
     inet_pton(AF_INET, targetIP.toStdString().c_str(), &srv.sin_addr);
@@ -47,11 +51,15 @@ void DspWorker::process() {
     ::setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(int));
 
     while (!currentFile.isEmpty() && running) {
-        if (checkDSP32) {
-            currentFile = run_dsp_engine_32INT(currentFile, sock); 
+        // --- Auswahl der Engine ---
+        if (checkIQEngine) {
+            currentFile = run_IQ_engine(currentFile, sock);  // simples I/Q Streaming, DUC auf SDR in SW oder FPGA realisiert
+        } else if (checkDSP32) {
+            currentFile = run_dsp_engine_32INT(currentFile, sock);  // COHIRADIAStreamer interer DUC, optimierter für langsamere Rechner
         } else {
-            currentFile = run_dsp_engine(currentFile, sock);
+            currentFile = run_dsp_engine(currentFile, sock); // COHIRADIAStreamer interner DUC mit liquidDSP, höherer CPU-Verbrauch aber sauberes Spektrum
         }
+        
         if (!currentFile.isEmpty()) {
             QFileInfo info(filePath);
             currentFile = info.absolutePath() + "/" + currentFile;
@@ -132,6 +140,7 @@ bool DspWorker::set_dac_rate(const std::string& ip, float rate) {
     return success;
 }
 
+// INTERNER DUC mit liquidDSP, bestes Spektrum, höhere CPU Last
 QString DspWorker::run_dsp_engine(QString fullPath, int sock) {
     std::ifstream file(fullPath.toStdString(), std::ios::binary);
     if (!file) return "";
@@ -240,6 +249,7 @@ QString DspWorker::run_dsp_engine(QString fullPath, int sock) {
     return nextFileFound;
 }
 
+// INTERNER DUC optimiert nur auf INT32, für ältere Rechner besser geeignet als liquidDSP Version
 QString DspWorker::run_dsp_engine_32INT(QString fullPath, int sock) {
     std::ifstream file(fullPath.toStdString(), std::ios::binary);
     if (!file) return "";
@@ -418,6 +428,164 @@ QString DspWorker::run_dsp_engine_32INT(QString fullPath, int sock) {
         } else {
             file.seekg(chunk.size, std::ios::cur);
         }
+    }
+    return nextFileFound;
+}
+
+
+// =====================================================================================
+// NEU: FPGA IN-BAND SIGNALING HILFSFUNKTIONEN
+// =====================================================================================
+
+uint32_t DspWorker::calculate_ftw(float frequency, float ref_clk) {
+    // Phase Tuning Word (FTW) Berechnung für den 50 MHz FPGA-Takt
+    // Formel: (Frequenz / Takt) * 2^32
+    double ftw = (static_cast<double>(frequency) / static_cast<double>(ref_clk)) * 4294967296.0;
+    return static_cast<uint32_t>(round(ftw));
+}
+
+uint16_t DspWorker::make_cmd_word(uint8_t ctrl, uint8_t index, uint8_t payload) {
+    // Protokoll-Aufbau: Bit [15:14]=ctrl, Bit [13:8]=index, Bit [7:0]=payload
+    return ((ctrl & 0x03) << 14) | ((index & 0x3F) << 8) | (payload & 0xFF);
+}
+
+// =====================================================================================
+// NEW: I/Q ENGINE MIT IN-BAND SIGNALING (DSP-Upsampling/Mischung muss im FPGA erfolgen)
+// =====================================================================================
+QString DspWorker::run_IQ_engine(QString fullPath, int sock) {
+    std::ifstream file(fullPath.toStdString(), std::ios::binary);
+    if (!file) return "";
+
+    RiffHeader riff;
+    file.read(reinterpret_cast<char*>(&riff), sizeof(RiffHeader));
+
+    uint32_t sampleRate = 0;
+    ChunkHeader chunk;
+    QString nextFileFound = "";
+    bool hardwareInitialized = false;
+
+    while (file.read(reinterpret_cast<char*>(&chunk), sizeof(ChunkHeader))) {
+        if (!running) break;
+        std::string tag(chunk.id, 4);
+
+        if (tag == "fmt ") {
+            FmtStruct fmt;
+            file.read(reinterpret_cast<char*>(&fmt), sizeof(FmtStruct));
+            sampleRate = fmt.sampleRate;
+            file.seekg(chunk.size - sizeof(FmtStruct), std::ios::cur);
+        }
+        else if (tag == "auxi") {
+            AuxiContent aux;
+            file.read(reinterpret_cast<char*>(&aux), sizeof(AuxiContent));
+            std::string rawName(aux.filename, 96);
+            size_t last = rawName.find_last_not_of(" \t\n\r\0\x01", std::string::npos, 6);
+            if (last != std::string::npos) nextFileFound = QString::fromStdString(rawName.substr(0, last + 1));
+            file.seekg(chunk.size - sizeof(AuxiContent), std::ios::cur);
+        }
+        else if (tag == "data") {
+            
+            // HARDWARE KONFIGURATION (Control-Port 5000)
+            if (!hardwareInitialized) {
+                // Das FPGA muss als 16-Bit (Native) konfiguriert werden
+                set_dac_width(targetIP.toStdString(), 16);
+                
+                // WICHTIG: Die Bus-Rate muss DOPPELT so hoch sein wie die IQ_WAV-Samplerate, 
+                // da I und Q hintereinander (interleaved) über denselben 16-Bit Bus wandern.
+                float busRate = static_cast<float>(sampleRate) * 2.0f;
+                set_dac_rate(targetIP.toStdString(), busRate);
+                
+                QThread::msleep(10); // Kurz warten, bis Backend die Rate übernommen hat
+                
+                // IN-BAND BEFEHLSSEQUENZ SENDEN (Data-Port 1234)
+                uint32_t target_ftw = calculate_ftw(manualShiftFreq); // cf aus der GUI / Dateiname
+                uint32_t target_rate = calculate_ftw((float)sampleRate);
+
+                std::vector<uint16_t> init_cmds;
+                
+                // --- Befehl 1: NCO Frequenz-Shift ('S') ---
+                init_cmds.push_back(make_cmd_word(2, 63, 'S')); // INIT Cmd
+                init_cmds.push_back(make_cmd_word(2,  0, (target_ftw & 0xFF)));
+                init_cmds.push_back(make_cmd_word(2,  1, ((target_ftw >> 8) & 0xFF)));
+                init_cmds.push_back(make_cmd_word(2,  2, ((target_ftw >> 16) & 0xFF)));
+                init_cmds.push_back(make_cmd_word(2,  3, ((target_ftw >> 24) & 0xFF)));
+                init_cmds.push_back(make_cmd_word(3,  0, 'E')); // EXECUTE
+
+                // --- Befehl 2: Eingangs-Samplerate ('R') ---
+                init_cmds.push_back(make_cmd_word(2, 63, 'R')); // INIT Cmd
+                init_cmds.push_back(make_cmd_word(2,  0, (target_rate & 0xFF)));
+                init_cmds.push_back(make_cmd_word(2,  1, ((target_rate >> 8) & 0xFF)));
+                init_cmds.push_back(make_cmd_word(2,  2, ((target_rate >> 16) & 0xFF)));
+                init_cmds.push_back(make_cmd_word(2,  3, ((target_rate >> 24) & 0xFF)));
+                init_cmds.push_back(make_cmd_word(3,  0, 'E')); // EXECUTE
+
+                // Sende Präfix-Befehle
+                ::send(sock, init_cmds.data(), init_cmds.size() * sizeof(uint16_t), MSG_NOSIGNAL);
+                hardwareInitialized = true;
+            }
+
+            // I/Q DATEN STREAMING
+            const size_t blockSize = 1024; // Samples aus der WAV
+            std::vector<int16_t> readBuf(blockSize * 2); // 16-Bit interleaved von der Disk
+            std::vector<uint16_t> netBuf(blockSize * 2); // 16-Bit unsigned für Bit-Maskierung ins Netzwerk
+
+            uint32_t dataSize = chunk.size;
+            uint32_t bytesRead = 0;
+            int gui_throttle = 0;
+            float peak_hold = 0.1f;
+
+            while (file.read(reinterpret_cast<char*>(readBuf.data()), blockSize * 4) && running) {
+                bytesRead += blockSize * 4;
+                float b_peak = 0.0001f;
+
+                for (size_t i = 0; i < blockSize; i++) {
+                    int16_t raw_i = readBuf[2*i];
+                    int16_t raw_q = readBuf[2*i+1];
+
+                    // --- Peak-Ermittlung für GUI ---
+                    float m = sqrtf(powf(raw_i/32768.0f, 2) + powf(raw_q/32768.0f, 2));
+                    if (m > b_peak) b_peak = m;
+
+                    // --- Format-Anpassung ---
+                    // 16-Bit Signed durch Arithmetic Right Shift auf 14-Bit reduzieren 
+                    // (Das Vorzeichen bleibt durch den Arithmetic Shift erhalten)
+                    int16_t scaled_i = raw_i >> 2;
+                    int16_t scaled_q = raw_q >> 2;
+
+                    // Untere 14 Bit maskieren (Löscht Einsen im MSB-Bereich, die durch 
+                    // Sign-Extension entstanden sein könnten)
+                    uint16_t pure_i = (uint16_t)scaled_i & 0x3FFF;
+                    uint16_t pure_q = (uint16_t)scaled_q & 0x3FFF;
+
+                    // --- In-Band Tagging ---
+                    // I-Sample (Bit 15:14 = 00)
+                    netBuf[2*i]   = pure_i | (0x00 << 14);
+                    
+                    // Q-Sample (Bit 15:14 = 01)
+                    netBuf[2*i+1] = pure_q | (0x01 << 14);
+                }
+
+                // GUI Updates (Level / Progress)
+                peak_hold = 0.95f * peak_hold + 0.05f * b_peak;
+                if (gui_throttle++ % 20 == 0) {
+                    emit progressUpdated((float)bytesRead / dataSize * 100.0f);
+                    emit levelUpdated(qBound(0, (int)(peak_hold * 100.0f), 100));
+                }
+
+                // Senden der fertig getaggten 16-Bit I/Q Daten über den Socket
+                ssize_t sentBytes = ::send(sock, netBuf.data(), blockSize * 4, MSG_NOSIGNAL);
+                if (sentBytes <= 0) {
+                    running = false; 
+                    break;           
+                }
+            }
+            break;
+        } 
+        else {
+            file.seekg(chunk.size, std::ios::cur);
+        }
+        
+        // Chunk Padding
+        if (chunk.size % 2 != 0) file.seekg(1, std::ios::cur);
     }
     return nextFileFound;
 }

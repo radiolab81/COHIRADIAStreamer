@@ -28,7 +28,9 @@ MainWindow::MainWindow() {
 
     treeView = new QTreeView();
     treeView->setModel(fileModel);
-    treeView->setColumnHidden(1, true); treeView->setColumnHidden(2, true); treeView->setColumnHidden(3, true);
+    treeView->setColumnHidden(1, true); 
+    treeView->setColumnHidden(2, true); 
+    treeView->setColumnHidden(3, true);
     mainLayout->addWidget(treeView, 1);
 
     QVBoxLayout *rightLayout = new QVBoxLayout();
@@ -40,8 +42,10 @@ MainWindow::MainWindow() {
 
     settingsContainer = new QWidget();
     QFormLayout *settingsForm = new QFormLayout(settingsContainer);
+
     editIP = new QLineEdit("127.0.0.1");
     editPort = new QLineEdit("1234");
+
     comboRate = new QComboBox();
     comboRate->addItem("5 MSPS (SMISDR, parlioSDR)", 5000000.0f);
     comboRate->addItem("10.0 MSPS (fl2k, parlioSDR)", 10000000.0f);
@@ -85,6 +89,11 @@ MainWindow::MainWindow() {
     checkDSP32 = new QCheckBox("use INT32-DSP instead liquiddsp [for slower CPUs]");
     checkDSP32->setChecked(false); //  default off
     settingsForm->addRow("DSP-Machine:",checkDSP32);
+
+    //Checkbox für das FPGA In-Band Signaling
+    checkIQEngine = new QCheckBox("SW or FPGA DUC (16 Bit with In-Band Signaling)");
+    checkIQEngine->setChecked(false); //  default off
+    settingsForm->addRow("I/Q Mode:", checkIQEngine);
     
     rightLayout->addWidget(settingsContainer);
 
@@ -116,6 +125,29 @@ MainWindow::MainWindow() {
     mainLayout->addLayout(rightLayout, 1);
     setCentralWidget(central);
     resize(950, 550);
+    
+    // Wenn die INT32-Engine gewählt wird, darf In-Band Signaling nicht aktiv sein
+    connect(checkDSP32, &QCheckBox::toggled, this, [this](bool checked) {
+        if (checked) {
+            checkIQEngine->setChecked(false);
+        }
+        updateInfrastrukturCheck();
+    });
+
+    // Wenn die FPGA In-Band Engine gewählt wird, deaktivieren wir die INT32-Engine
+    // Zudem grauen wir Samplerate und Bits aus, da diese nativ aus der Datei bestimmt werden!
+    connect(checkIQEngine, &QCheckBox::toggled, this, [this](bool checked) {
+        if (checked) {
+            checkDSP32->setChecked(false);
+            comboRate->setEnabled(false);
+            comboBits->setEnabled(false);
+        } else {
+            comboRate->setEnabled(true);
+            comboBits->setEnabled(true);
+        }
+        updateInfrastrukturCheck();
+    });
+
 
     connect(treeView, &QTreeView::clicked, this, &MainWindow::onFileSelected);
     connect(btnPlay, &QPushButton::clicked, this, &MainWindow::startStreaming);
@@ -125,8 +157,7 @@ MainWindow::MainWindow() {
     connect(editManualGain, &QLineEdit::textChanged, this, &MainWindow::onGainChanged);
 
     connect(checkOffset, &QCheckBox::toggled, this, &MainWindow::onOffsetToggled);
-    connect(checkDSP32, &QCheckBox::toggled, this, &MainWindow::onOffsetToggled);
-
+ 
     connect(comboRate, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::updateInfrastrukturCheck);
     connect(comboBits, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::updateInfrastrukturCheck);
     updateInfrastrukturCheck();
@@ -152,6 +183,11 @@ void MainWindow::updateInfrastrukturCheck() {
         transmissionBits = 8; // Nur hier halbiert sich die Rate auf dem Kabel
     }
 
+        if (checkIQEngine && checkIQEngine->isChecked()) {
+        rate = static_cast<float>(currentFileSampleRate);
+        transmissionBits = 16; // In-Band Signaling läuft mit 16 Bit
+    }
+
     // Berechnung: Samplerate * Bits pro Sample / 1 Million = MBit/s
     float mbit = (rate * transmissionBits) / 1000000.0f;
 
@@ -173,13 +209,6 @@ void MainWindow::updateInfrastrukturCheck() {
                          .arg(eth, usb, gbe, fib).arg(mbit, 0, 'f', 1));
 }
 
-void MainWindow::onOffsetToggled(bool checked) {
-    if (currentWorker) {
-        currentWorker->useOffset = checked;
-        currentWorker->checkDSP32 = checked;
-    }
-}
-
 
 void MainWindow::onFileSelected(const QModelIndex &index) {
     if (btnStop->isEnabled()) return; // Während Play keine neue Datei wählen
@@ -199,6 +228,8 @@ void MainWindow::onFileSelected(const QModelIndex &index) {
             file.seekg(chunk.size - sizeof(AuxiContent), std::ios::cur);
         } else file.seekg(chunk.size, std::ios::cur);
     }
+
+    currentFileSampleRate = sRate; //Samplerate für spätere Berechnungen in der Klasse merken
     float cf = 0;
     size_t khzPos = path.toStdString().find("kHz");
     if (khzPos != std::string::npos) {
@@ -209,6 +240,8 @@ void MainWindow::onFileSelected(const QModelIndex &index) {
     infoBox->setText(QString("Rate: %1 Hz | Shift: %2 Hz\nNext: %3").arg(sRate).arg(cf).arg(nextFile));
     editShift->setText(QString::number(cf));
     selectedFile = path;
+   
+    updateInfrastrukturCheck();
 }
 
 void MainWindow::startStreaming() {
@@ -224,6 +257,7 @@ void MainWindow::startStreaming() {
     comboBits->setEnabled(false);
     editShift->setEnabled(false);
     checkDSP32->setEnabled(false);
+    checkIQEngine->setEnabled(false);
 
     // AGC und Gain bleiben ENABLED!
     checkAGC->setEnabled(true); 
@@ -231,6 +265,8 @@ void MainWindow::startStreaming() {
 
     QThread *thread = new QThread();
     DspWorker *worker = new DspWorker();
+
+    // Parameter an den Worker übergeben
     worker->filePath = selectedFile;
     worker->targetIP = editIP->text();
     worker->targetPort = editPort->text().toInt();
@@ -239,42 +275,68 @@ void MainWindow::startStreaming() {
     worker->useAGC = checkAGC->isChecked();
     worker->useOffset = checkOffset->isChecked();
     worker->checkDSP32 = checkDSP32->isChecked();
+    worker->checkIQEngine = checkIQEngine->isChecked(); // NEU: Aktiviert run_IQ_engine
     worker->manualGainValue = editManualGain->text().toFloat() / 100.0f;
     
 
     QString rateText = comboRate->currentText();
     worker->targetRate = comboRate->currentData().toFloat();
 
+    // Worker in den Thread verschieben
     worker->moveToThread(thread);
+
+    // Signal-Slot Verbindungen für Thread-Steuerung und Telemetrie
     connect(thread, &QThread::started, worker, &DspWorker::process);
     connect(worker, &DspWorker::finished, thread, &QThread::quit);
     connect(worker, &DspWorker::finished, worker, &DspWorker::deleteLater);
     connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+
     connect(worker, &DspWorker::progressUpdated, progress, &QProgressBar::setValue);
     connect(worker, &DspWorker::levelUpdated, this, &MainWindow::updateLevelBar);
+
+    // Clean-Up beim Beenden des Streamings
     connect(worker, &DspWorker::finished, this, [this](){ 
 
-    // UI wieder freigeben
-    editIP->setEnabled(true);
-    editPort->setEnabled(true);
-    comboRate->setEnabled(true);
-    comboBits->setEnabled(true);
-    editShift->setEnabled(true);
-    checkDSP32->setEnabled(true);
+       // UI wieder freigeben
+       editIP->setEnabled(true);
+       editPort->setEnabled(true);
+       comboRate->setEnabled(true);
+       comboBits->setEnabled(true);
+       editShift->setEnabled(true);
+       checkDSP32->setEnabled(true);
+       checkIQEngine->setEnabled(true);
+       // Ausgegrauter Zustand der Comboboxen nach Stop wiederherstellen, 
+       // falls In-Band Engine weiterhin selektiert ist
+       if (checkIQEngine->isChecked()) {
+          comboRate->setEnabled(false);
+          comboBits->setEnabled(false);
+       }
 
-    // UI-Elemente
-    treeView->setEnabled(true);
-    btnPlay->setEnabled(true); 
-    btnStop->setEnabled(false); 
+       // UI-Elemente
+       treeView->setEnabled(true);
+       btnPlay->setEnabled(true); 
+       btnStop->setEnabled(false); 
 
-    levelBar->setValue(0);
-    progress->setValue(0); // Fortschrittsbalken auch zurücksetzen
+       levelBar->setValue(0);
+       progress->setValue(0); // Fortschrittsbalken auch zurücksetzen
     });
+
     currentWorker = worker;
     thread->start();
 }
 
-void MainWindow::stopStreaming() { if (currentWorker) currentWorker->running = false; }
+void MainWindow::stopStreaming() { 
+    if (currentWorker) {
+        currentWorker->running = false; 
+    }
+}
+
+void MainWindow::onOffsetToggled(bool checked) {
+    if (currentWorker) {
+        currentWorker->useOffset = checked;
+        currentWorker->checkDSP32 = checked;
+    }
+}
 
 void MainWindow::onAgcToggled(bool checked) {
      if (currentWorker) currentWorker->useAGC = checked;
