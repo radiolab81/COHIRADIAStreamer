@@ -33,7 +33,7 @@ Previously, the *COHIRADIAStreamer* had to perform the resource-intensive Digita
 With the newly introduced **I/Q Mode (16 Bit with In-Band Signaling)**, the Digital Up-Converter is shifted directly into the gateware. 
 
 ### ✨ Key Advantages:
-* **Drastically Reduced Network Bandwidth:** Since only the I/Q baseband needs to be transmitted at the native file sample rate (e.g., 250 kHz), the required data rate drops significantly. Up-converting into the 15m band (e.g., at 18.96 MHz) now requires merely **~4.0 MBit/s** of network bandwidth!
+* **Drastically Reduced Network Bandwidth:** Since only the I/Q baseband needs to be transmitted at the native file sample rate (e.g., 250 kHz), the required data rate drops significantly. Up-converting into the 15m band (e.g., at 18.96 MHz) now requires merely **~8.0 MBit/s** of network bandwidth!
 
   ![mainsw4](https://github.com/radiolab81/COHIRADIAStreamer/blob/main/www/netw_bw_15m.jpg)
 
