@@ -185,6 +185,7 @@ void MainWindow::updateInfrastrukturCheck() {
 
         if (checkIQEngine && checkIQEngine->isChecked()) {
         rate = static_cast<float>(currentFileSampleRate);
+        rate = 2*rate; //  I und Q zu je 16 Bit, also interleaved
         transmissionBits = 16; // In-Band Signaling läuft mit 16 Bit
     }
 
