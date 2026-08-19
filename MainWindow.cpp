@@ -15,6 +15,7 @@
 #include <QThread>
 #include <QHeaderView>
 #include <QCheckBox>
+#include <QTimer>
 #include <fstream>
 
 MainWindow::MainWindow() {
@@ -161,6 +162,21 @@ MainWindow::MainWindow() {
     connect(comboRate, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::updateInfrastrukturCheck);
     connect(comboBits, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::updateInfrastrukturCheck);
     updateInfrastrukturCheck();
+
+    // NEU: Telemetrie-Timer fuer Fortschritts-/Pegelanzeige. Wird HIER mit
+    // Parent "this" (MainWindow) erzeugt - lebt also garantiert im
+    // GUI-Thread und bleibt dort auch, weil er niemals moveToThread()
+    // durchlaeuft (nur der DspWorker wird verschoben, nicht MainWindow).
+    // 50ms = 20Hz Update-Rate, unabhaengig vom Timing der DSP-Schleife.
+    telemetryTimer = new QTimer(this);
+    connect(telemetryTimer, &QTimer::timeout, this, &MainWindow::pollWorkerTelemetry);
+    telemetryTimer->start(50);
+}
+
+void MainWindow::pollWorkerTelemetry() {
+    if (!currentWorker) return;
+    progress->setValue((int)currentWorker->progressPct.load(std::memory_order_relaxed));
+    updateLevelBar(currentWorker->levelPct.load(std::memory_order_relaxed));
 }
 
 void MainWindow::updateLevelBar(int val) {
@@ -292,8 +308,11 @@ void MainWindow::startStreaming() {
     connect(worker, &DspWorker::finished, worker, &DspWorker::deleteLater);
     connect(thread, &QThread::finished, thread, &QThread::deleteLater);
 
-    connect(worker, &DspWorker::progressUpdated, progress, &QProgressBar::setValue);
-    connect(worker, &DspWorker::levelUpdated, this, &MainWindow::updateLevelBar);
+    // HINWEIS: Keine direkten progressUpdated/levelUpdated-Connections mehr.
+    // Diese Werte werden jetzt per telemetryTimer (siehe Konstruktor und
+    // pollWorkerTelemetry()) aus worker->progressPct/levelPct ausgelesen -
+    // dadurch feuert der DSP-Thread nie mehr ein Cross-Thread-Signal im
+    // Hot-Path.
 
     // Clean-Up beim Beenden des Streamings
     connect(worker, &DspWorker::finished, this, [this](){ 
@@ -320,6 +339,13 @@ void MainWindow::startStreaming() {
 
        levelBar->setValue(0);
        progress->setValue(0); // Fortschrittsbalken auch zurücksetzen
+
+       // WICHTIG: currentWorker zuruecksetzen, BEVOR worker->deleteLater()
+       // greift (siehe connect(worker, &DspWorker::finished, worker,
+       // &DspWorker::deleteLater) oben) - sonst koennte der telemetryTimer
+       // (der alle 50ms unabhaengig weiterlaeuft) kurzzeitig auf einen
+       // bereits zur Loeschung vorgemerkten Worker zugreifen.
+       currentWorker = nullptr;
     });
 
     currentWorker = worker;

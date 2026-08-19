@@ -26,6 +26,16 @@ public:
     // NEU: Schalter für die direkte In-Band Signaling I/Q Engine
     std::atomic<bool> checkIQEngine{false}; 
 
+    // NEU: lock-freie Telemetrie-Werte statt direktem emit() aus dem
+    // DSP/Sende-Thread heraus. Werden dort per store() aktualisiert (billig,
+    // kein Cross-Thread-Signal, kein Warten auf den GUI-Event-Loop) und von
+    // einem Timer IM GUI-THREAD (siehe MainWindow) periodisch ausgelesen.
+    // WICHTIG: Absichtlich NICHT als QTimer/QObject-Kind hier in DspWorker
+    // angelegt - ein Timer, der als Kind von DspWorker erzeugt wird, würde
+    // durch worker->moveToThread(thread) mit in den DSP-Thread wandern.
+    std::atomic<float> progressPct{0.0f};
+    std::atomic<int>   levelPct{0};
+
 signals:
     void progressUpdated(float percent);
     void levelUpdated(int level);

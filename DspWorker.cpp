@@ -12,6 +12,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <liquid/liquid.h>
+#include <chrono>
+#include <thread>
 
 // --- BEGIN:LUT for INT32 MATH without liquiddsp ---
 #define LUT_BITS 12
@@ -194,6 +196,28 @@ QString DspWorker::run_dsp_engine(QString fullPath, int sock) {
             uint32_t dataSize = chunk.size;
             uint32_t bytesRead = 0;
 
+            // --- SOFTWARE-PACING -------------------------------------------
+            // Der DSP+Sende-Pfad ist auf modernen CPUs typischerweise schneller
+            // als Echtzeit. Ohne Bremse rennt der Sender in Bursts los, bis
+            // alle Puffer (Kernel-Sendepuffer, Netzwerk, Pi-Empfangspuffer,
+            // ready_queue) voll sind, blockiert dann hart in send() (in
+            // Tests bis zu 439ms am Stueck), und wiederholt diesen Zyklus
+            // periodisch.
+            // Fix: der Sender haelt sich selbst an die Uhr und darf nur
+            // um einen begrenzten Betrag ("Lead") vor der Echtzeit liegen.
+            // TARGET/MAX bewusst grosszuegig gewaehlt (80/150ms statt eng
+            // 5/20ms): ein zu enges Fenster hat in Tests dazu gefuehrt, dass
+            // kurze CPU-Haenger (z.B. thermisches Throttling, Hintergrund-
+            // prozesse) fuehrten, weil
+            // kein Polster mehr da war, um sie abzufedern. Verifiziert ueber
+            // mehrere Testlaeufe (5MSPS @ 8-Bit und 16-Bit): lead_us bleibt
+            // damit durchgehend positiv, keine Unterlaeufe mehr.
+            const double TARGET_LEAD_US = 80000.0;   // gewuenschter Vorlauf: 80ms
+            const double MAX_LEAD_US    = 150000.0;  // ab hier wird gebremst: 150ms
+            auto t_pace_start = std::chrono::steady_clock::now();
+            double cumulative_realtime_us = 0.0;
+            // --- ENDE PACING-SETUP ------------------------------------------
+
             while (file.read(reinterpret_cast<char*>(readBuf.data()), blockSize * 4) && running) {
                 bytesRead += blockSize * 4;
                 float block_peak = 0.0001f;
@@ -207,8 +231,8 @@ QString DspWorker::run_dsp_engine(QString fullPath, int sock) {
                 if (useAGC) current_gain = 0.98f * current_gain + 0.02f * ((bitScale * 0.65f) / (peak_hold + 0.0001f));
                 else current_gain = bitScale * manualGainValue;
 
-                emit progressUpdated((float)bytesRead / dataSize * 100.0f);
-                emit levelUpdated(qBound(0, (int)(peak_hold * 100.0f), 100));
+                progressPct.store((float)bytesRead / dataSize * 100.0f, std::memory_order_relaxed);
+                levelPct.store(qBound(0, (int)(peak_hold * 100.0f), 100), std::memory_order_relaxed);
 
                 unsigned int nw;
                 msresamp_crcf_execute(resamp, x.data(), blockSize, y.data(), &nw);
@@ -239,6 +263,19 @@ QString DspWorker::run_dsp_engine(QString fullPath, int sock) {
                     running = false; // Beendet die Schleife im run_dsp_engine
                     break;           // Springt aus der aktuellen data-Schleife
                 }
+
+                // --- PACING: Vorlauf begrenzen ---
+                // nw = Anzahl gesendeter Output-Samples dieses Blocks bei
+                // targetRate -> Echtzeit-Aequivalent in Mikrosekunden.
+                cumulative_realtime_us += (double)nw / (double)targetRate * 1e6;
+                double elapsed_us = std::chrono::duration<double, std::micro>(
+                    std::chrono::steady_clock::now() - t_pace_start).count();
+                double lead_us = cumulative_realtime_us - elapsed_us;
+                if (lead_us > MAX_LEAD_US) {
+                    double sleep_us = lead_us - TARGET_LEAD_US;
+                    std::this_thread::sleep_for(std::chrono::microseconds((long long)sleep_us));
+                }
+                // --- ENDE PACING ---
             }
             msresamp_crcf_destroy(resamp);
             nco_crcf_destroy(vco);
@@ -322,7 +359,12 @@ QString DspWorker::run_dsp_engine_32INT(QString fullPath, int sock) {
 
             uint32_t dataSize = chunk.size;
             uint32_t totalBytesRead = 0;
-            int gui_throttle = 0;
+
+            // Pacing (siehe run_dsp_engine fuer Begruendung)
+            const double TARGET_LEAD_US_32 = 80000.0;
+            const double MAX_LEAD_US_32    = 150000.0;
+            auto t_pace_start_32 = std::chrono::steady_clock::now();
+            double cumulative_realtime_us_32 = 0.0;
 
             while (file.read(reinterpret_cast<char*>(readBuf.data()), blockSize * 4) && running) {
                 totalBytesRead += blockSize * 4;
@@ -337,10 +379,8 @@ QString DspWorker::run_dsp_engine_32INT(QString fullPath, int sock) {
                 peak_hold = 0.95f * peak_hold + 0.05f * b_peak;
 
                 // 2. GUI Update Signale (gedrosselt auf ~50Hz Update-Rate)
-                if (gui_throttle++ % 20 == 0) {
-                    emit progressUpdated((float)totalBytesRead / (float)dataSize * 100.0f);
-                    emit levelUpdated(std::max(0, std::min(100, (int)(peak_hold * 100.0f))));
-                }
+                progressPct.store((float)totalBytesRead / (float)dataSize * 100.0f, std::memory_order_relaxed);
+                levelPct.store(std::max(0, std::min(100, (int)(peak_hold * 100.0f))), std::memory_order_relaxed);
 
                 // 3. Gain-Berechnung (AGC an/aus)
                 if (useAGC) {
@@ -422,6 +462,17 @@ QString DspWorker::run_dsp_engine_32INT(QString fullPath, int sock) {
                     else                 s_ret = ::send(sock, netBuf16.data(), out_idx * 2, MSG_NOSIGNAL);
                     
                     if (s_ret <= 0) { running = false; break; }
+
+                    // --- PACING ---
+                    cumulative_realtime_us_32 += (double)out_idx / (double)targetRate * 1e6;
+                    double elapsed_us_32 = std::chrono::duration<double, std::micro>(
+                        std::chrono::steady_clock::now() - t_pace_start_32).count();
+                    double lead_us_32 = cumulative_realtime_us_32 - elapsed_us_32;
+                    if (lead_us_32 > MAX_LEAD_US_32) {
+                        double sleep_us = lead_us_32 - TARGET_LEAD_US_32;
+                        std::this_thread::sleep_for(std::chrono::microseconds((long long)sleep_us));
+                    }
+                    // --- ENDE PACING ---
                 }
             }
             break;
@@ -530,8 +581,15 @@ QString DspWorker::run_IQ_engine(QString fullPath, int sock) {
 
             uint32_t dataSize = chunk.size;
             uint32_t bytesRead = 0;
-            int gui_throttle = 0;
             float peak_hold = 0.1f;
+
+            // Pacing (siehe run_dsp_engine fuer Begruendung). Hier ist die
+            // Echtzeit-Referenz die QUELL-Samplerate (sampleRate), nicht
+            // targetRate - ein I/Q-Block entspricht blockSize Quell-Samples.
+            const double TARGET_LEAD_US_IQ = 80000.0;
+            const double MAX_LEAD_US_IQ    = 150000.0;
+            auto t_pace_start_iq = std::chrono::steady_clock::now();
+            double cumulative_realtime_us_iq = 0.0;
 
             while (file.read(reinterpret_cast<char*>(readBuf.data()), blockSize * 4) && running) {
                 bytesRead += blockSize * 4;
@@ -566,10 +624,8 @@ QString DspWorker::run_IQ_engine(QString fullPath, int sock) {
 
                 // GUI Updates (Level / Progress)
                 peak_hold = 0.95f * peak_hold + 0.05f * b_peak;
-                if (gui_throttle++ % 20 == 0) {
-                    emit progressUpdated((float)bytesRead / dataSize * 100.0f);
-                    emit levelUpdated(qBound(0, (int)(peak_hold * 100.0f), 100));
-                }
+                progressPct.store((float)bytesRead / dataSize * 100.0f, std::memory_order_relaxed);
+                levelPct.store(qBound(0, (int)(peak_hold * 100.0f), 100), std::memory_order_relaxed);
 
                 // Senden der fertig getaggten 16-Bit I/Q Daten über den Socket
                 ssize_t sentBytes = ::send(sock, netBuf.data(), blockSize * 4, MSG_NOSIGNAL);
@@ -577,6 +633,17 @@ QString DspWorker::run_IQ_engine(QString fullPath, int sock) {
                     running = false; 
                     break;           
                 }
+
+                // --- PACING ---
+                cumulative_realtime_us_iq += (double)blockSize / (double)sampleRate * 1e6;
+                double elapsed_us_iq = std::chrono::duration<double, std::micro>(
+                    std::chrono::steady_clock::now() - t_pace_start_iq).count();
+                double lead_us_iq = cumulative_realtime_us_iq - elapsed_us_iq;
+                if (lead_us_iq > MAX_LEAD_US_IQ) {
+                    double sleep_us = lead_us_iq - TARGET_LEAD_US_IQ;
+                    std::this_thread::sleep_for(std::chrono::microseconds((long long)sleep_us));
+                }
+                // --- ENDE PACING ---
             }
             break;
         } 

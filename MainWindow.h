@@ -15,6 +15,7 @@ class QComboBox;
 class QCheckBox;
 class QProgressBar;
 class QPushButton;
+class QTimer;
 class DspWorker;
 
 // --- MAIN WINDOW ---
@@ -33,6 +34,13 @@ private slots:
     void onAgcToggled(bool checked);
     void onGainChanged(const QString &text);
 
+    // NEU: laeuft im GUI-Thread (Timer wird in MainWindow erzeugt, NICHT
+    // als Kind von DspWorker - siehe Kommentar in startStreaming()), liest
+    // die atomaren Telemetrie-Werte des Workers periodisch aus und
+    // aktualisiert progress/levelBar. Entkoppelt die GUI-Updates
+    // vollstaendig vom Timing der DSP/Sende-Schleife.
+    void pollWorkerTelemetry();
+
 private:
     QFileSystemModel *fileModel; 
     QTreeView *treeView; 
@@ -46,6 +54,11 @@ private:
     QString selectedFile; 
     DspWorker *currentWorker = nullptr;
     QLabel *statusLabel;
+
+    // NEU: Poll-Timer fuer Worker-Telemetrie, lebt im GUI-Thread (Parent =
+    // this = MainWindow), ist NIEMALS von moveToThread() des Workers
+    // betroffen, da er kein Kind von DspWorker ist.
+    QTimer *telemetryTimer = nullptr;
     
     // Bestehende Checkboxen
     QCheckBox *checkOffset;
